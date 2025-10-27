@@ -2,176 +2,121 @@ import argparse
 import sys
 import os
 import json
+import requests
 from typing import Dict, Any
 
 
-class BaseDependencyParser:
-    def parse_dependencies(self, content: str) -> Dict[str, str]:
-        raise NotImplementedError
+class NPMPackageParser:
+    def __init__(self):
+        self.npm_registry_url = "https://registry.npmjs.org"
 
-
-class RequirementsParser(BaseDependencyParser):
-
-    def parse_dependencies(self, content: str) -> Dict[str, str]:
-        dependencies = {}
-
-        for line_num, line in enumerate(content.split('\n'), 1):
-            line = line.strip()
-
-            if not line or line.startswith('#'):
-                continue
-
-            if '==' in line:
-                parts = line.split('==', 1)
-                package = parts[0].strip()
-                version = parts[1].strip()
-            elif '>=' in line:
-                parts = line.split('>=', 1)
-                package = parts[0].strip()
-                version = f">={parts[1].strip()}"
-            elif '@' in line:
-                package = line.split('@')[0].strip()
-            else:
-                package = line
-                version = "unspecified"
-
-            if package:
-                dependencies[package] = version
-
-        return dependencies
-
-
-class PackageJsonParser(BaseDependencyParser):
-
-    def parse_dependencies(self, content: str) -> Dict[str, str]:
+    def get_package_info(self, package_name: str) -> Dict[str, Any]:
         try:
-            data = json.loads(content)
-            dependencies = {}
+            url = f"{self.npm_registry_url}/{package_name}"
+            response = requests.get(url, timeout=10)
 
-            if 'dependencies' in data:
-                dependencies.update(data['dependencies'])
+            if response.status_code == 404:
+                raise ValueError(f"Пакет '{package_name}' не найден в npm registry")
+            elif response.status_code != 200:
+                raise ValueError(f"Ошибка npm registry: {response.status_code}")
 
-            if 'devDependencies' in data:
-                for dep, version in data['devDependencies'].items():
-                    dependencies[f"{dep} (dev)"] = version
+            return response.json()
 
-            return dependencies
+        except requests.exceptions.RequestException as e:
+            raise ValueError(f"Ошибка подключения к npm registry: {e}")
 
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Ошибка парсинга JSON: {e}")
+    def get_dependencies(self, package_name: str, version: str = "latest") -> Dict[str, str]:
+        package_info = self.get_package_info(package_name)
 
+        if version == "latest":
+            version = package_info.get('dist-tags', {}).get('latest', 'latest')
 
-class PomXmlParser(BaseDependencyParser):
+        version_info = package_info.get('versions', {}).get(version)
+        if not version_info:
+            raise ValueError(f"Версия '{version}' не найдена для пакета '{package_name}'")
 
-    def parse_dependencies(self, content: str) -> Dict[str, str]:
         dependencies = {}
 
-        lines = content.split('\n')
-        in_dependencies = False
+        deps = version_info.get('dependencies', {})
+        for dep, version_spec in deps.items():
+            dependencies[dep] = version_spec
 
-        for line in lines:
-            line = line.strip()
+        dev_deps = version_info.get('devDependencies', {})
+        for dep, version_spec in dev_deps.items():
+            dependencies[f"{dep} (dev)"] = version_spec
 
-            if '<dependencies>' in line:
-                in_dependencies = True
-                continue
-            elif '</dependencies>' in line:
-                in_dependencies = False
-                continue
-
-            if in_dependencies and '<groupId>' in line:
-                group_id = self._extract_value(line, 'groupId')
-                artifact_id = None
-                version = None
-
-                for next_line in lines[lines.index(line) + 1:]:
-                    if '<artifactId>' in next_line:
-                        artifact_id = self._extract_value(next_line, 'artifactId')
-                    elif '<version>' in next_line:
-                        version = self._extract_value(next_line, 'version')
-                    elif '</dependency>' in next_line:
-                        break
-
-                if group_id and artifact_id:
-                    package_name = f"{group_id}:{artifact_id}"
-                    dependencies[package_name] = version or "unspecified"
+        peer_deps = version_info.get('peerDependencies', {})
+        for dep, version_spec in peer_deps.items():
+            dependencies[f"{dep} (peer)"] = version_spec
 
         return dependencies
 
-    def _extract_value(self, line: str, tag: str) -> str:
-        start_tag = f"<{tag}>"
-        end_tag = f"</{tag}>"
 
-        start_idx = line.find(start_tag) + len(start_tag)
-        end_idx = line.find(end_tag)
+class URLRepositoryParser:
 
-        if start_idx >= len(start_tag) and end_idx > start_idx:
-            return line[start_idx:end_idx].strip()
+    def __init__(self):
+        self.npm_parser = NPMPackageParser()
 
-        return ""
+    def parse_from_url(self, url: str, package_name: str) -> Dict[str, str]:
+
+        if 'npmjs.org' in url or 'registry.npmjs.org' in url:
+            return self.npm_parser.get_dependencies(package_name)
+
+        elif 'github.com' in url:
+            return self._parse_github_repo(url, package_name)
+
+        else:
+            raise ValueError(f"Неподдерживаемый URL репозитория: {url}")
+
+    def _parse_github_repo(self, github_url: str, package_name: str) -> Dict[str, str]:
+        try:
+            # Преобразуем GitHub URL в raw content URL
+            if 'github.com' in github_url and '/blob/' in github_url:
+                raw_url = github_url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+            else:
+                repo_path = github_url.replace('https://github.com/', '')
+                raw_url = f"https://raw.githubusercontent.com/{repo_path}/main/package.json"
+
+            response = requests.get(raw_url, timeout=10)
+
+            if response.status_code == 404:
+                raw_url = f"https://raw.githubusercontent.com/{repo_path}/master/package.json"
+                response = requests.get(raw_url, timeout=10)
+
+            if response.status_code != 200:
+                raise ValueError(f"Не удалось получить package.json из репозитория")
+
+            package_data = response.json()
+            return self._extract_dependencies_from_package_json(package_data)
+
+        except requests.exceptions.RequestException as e:
+            raise ValueError(f"Ошибка подключения к GitHub: {e}")
+        except json.JSONDecodeError:
+            raise ValueError("Некорректный JSON в package.json")
+
+    def _extract_dependencies_from_package_json(self, package_data: Dict) -> Dict[str, str]:
+        dependencies = {}
+
+        deps = package_data.get('dependencies', {})
+        for dep, version in deps.items():
+            dependencies[dep] = version
+
+        dev_deps = package_data.get('devDependencies', {})
+        for dep, version in dev_deps.items():
+            dependencies[f"{dep} (dev)"] = version
+
+        return dependencies
 
 
 class DependencyVisualizer:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.parsers = {
-            'requirements.txt': RequirementsParser(),
-            'package.json': PackageJsonParser(),
-            'pom.xml': PomXmlParser()
-        }
+        self.url_parser = URLRepositoryParser()
+        self.npm_parser = NPMPackageParser()
 
-    def detect_file_type(self, file_path: str) -> str:
-        filename = os.path.basename(file_path).lower()
-
-        if filename == 'requirements.txt':
-            return 'requirements.txt'
-        elif filename == 'package.json':
-            return 'package.json'
-        elif filename == 'pom.xml':
-            return 'pom.xml'
-        else:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read(1000)  # Читаем первые 1000 символов
-
-                if '"dependencies"' in content or '"devDependencies"' in content:
-                    return 'package.json'
-                elif '<dependencies>' in content:
-                    return 'pom.xml'
-                else:
-                    return 'requirements.txt'
-            except:
-                return 'requirements.txt'
-
-    def parse_dependencies_from_file(self, file_path: str) -> Dict[str, str]:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            file_type = self.detect_file_type(file_path)
-            parser = self.parsers.get(file_type)
-
-            if not parser:
-                raise ValueError(f"Неподдерживаемый тип файла: {file_type}")
-
-            return parser.parse_dependencies(content)
-
-        except FileNotFoundError:
-            raise ValueError(f"Файл не найден: {file_path}")
-        except Exception as e:
-            raise ValueError(f"Ошибка при чтении файла {file_path}: {e}")
-
-    def filter_dependencies(self, dependencies: Dict[str, str]) -> Dict[str, str]:
-        if not self.config['filter_substring']:
-            return dependencies
-
-        filtered = {}
-        for package, version in dependencies.items():
-            if self.config['filter_substring'].lower() in package.lower():
-                filtered[package] = version
-
-        return filtered
+    def is_url(self, repository: str) -> bool:
+        return repository.startswith(('http://', 'https://'))
 
     def validate_parameters(self) -> bool:
 
@@ -180,22 +125,13 @@ class DependencyVisualizer:
             return False
 
         if not self.config['repository']:
-            print("Ошибка: Путь к файлу зависимостей не может быть пустым")
+            print("Ошибка: URL репозитория или путь к файлу не может быть пустым")
             return False
 
-        if self.config['test_mode']:
+        if self.config['test_mode'] and not self.is_url(self.config['repository']):
             if not os.path.exists(self.config['repository']):
                 print(f"Ошибка: Файл не найден: {self.config['repository']}")
                 return False
-
-        if not self.config['output_file']:
-            print("Ошибка: Имя выходного файла не может быть пустым")
-            return False
-
-        valid_extensions = ['.png', '.jpg', '.jpeg', '.svg', '.pdf']
-        if not any(self.config['output_file'].lower().endswith(ext) for ext in valid_extensions):
-            print("Ошибка: Неподдерживаемое расширение файла. Используйте: .png, .jpg, .jpeg, .svg, .pdf")
-            return False
 
         return True
 
@@ -209,19 +145,21 @@ class DependencyVisualizer:
         print(f"Источник: {self.config['repository']}")
 
         try:
-            dependencies = self.parse_dependencies_from_file(self.config['repository'])
+            if self.is_url(self.config['repository']):
+                print("Режим: URL репозитория")
+                dependencies = self.url_parser.parse_from_url(
+                    self.config['repository'],
+                    self.config['package_name']
+                )
+            else:
+                print("Режим: Локальный файл")
+                dependencies = self.npm_parser.get_dependencies(self.config['package_name'])
 
             if self.config['filter_substring']:
                 dependencies = self.filter_dependencies(dependencies)
                 print(f"Применен фильтр: '{self.config['filter_substring']}'")
 
-            print(f"\nНайдено зависимостей: {len(dependencies)}")
-            if dependencies:
-                print("\nСписок зависимостей:")
-                for package, version in dependencies.items():
-                    print(f"  - {package}: {version}")
-            else:
-                print("Зависимости не найдены или отфильтрованы")
+            self.display_direct_dependencies(dependencies)
 
             print(f"\nРезультат будет сохранен в: {self.config['output_file']}")
 
@@ -231,31 +169,65 @@ class DependencyVisualizer:
 
         return True
 
+    def filter_dependencies(self, dependencies: Dict[str, str]) -> Dict[str, str]:
+        if not self.config['filter_substring']:
+            return dependencies
+
+        filtered = {}
+        for package, version in dependencies.items():
+            if self.config['filter_substring'].lower() in package.lower():
+                filtered[package] = version
+
+        return filtered
+
+    def display_direct_dependencies(self, dependencies: Dict[str, str]):
+        print(f"\n Прямые зависимости пакета '{self.config['package_name'].upper()}' ")
+
+        if not dependencies:
+            print("Прямые зависимости не найдены")
+            return
+
+        print(f"Найдено прямых зависимостей: {len(dependencies)}")
+
+        regular_deps = {k: v for k, v in dependencies.items() if '(dev)' not in k and '(peer)' not in k}
+        dev_deps = {k: v for k, v in dependencies.items() if '(dev)' in k}
+        peer_deps = {k: v for k, v in dependencies.items() if '(peer)' in k}
+
+        if regular_deps:
+            print("\nОсновные зависимости:")
+            for package, version in sorted(regular_deps.items()):
+                print(f"   {package}: {version}")
+
+        if dev_deps:
+            print("\nЗависимости разработки:")
+            for package, version in sorted(dev_deps.items()):
+                print(f"   {package}: {version}")
+
+        if peer_deps:
+            print("\nPeer зависимости:")
+            for package, version in sorted(peer_deps.items()):
+                print(f"   {package}: {version}")
+
+        print("")
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Инструмент визуализации графа зависимостей пакетов',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-Примеры использования:
-  python main.py --package myapp --repo requirements.txt --output deps.png
-  python main.py --package myapp --repo package.json --test-mode --filter "react"
-  python main.py --package myproject --repo pom.xml --output graph.svg --filter "spring"
-        '''
-    )
+        formatter_class=argparse.RawDescriptionHelpFormatter)
 
     parser.add_argument(
         '--package', '--package-name',
         dest='package_name',
         required=True,
-        help='Имя анализируемого пакета'
+        help='Имя анализируемого npm пакета'
     )
 
     parser.add_argument(
         '--repo', '--repository',
         dest='repository',
         required=True,
-        help='Путь к файлу зависимостей (requirements.txt, package.json, pom.xml)'
+        help='URL npm registry или GitHub репозитория, либо путь к локальному файлу'
     )
 
     parser.add_argument(
