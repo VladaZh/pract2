@@ -4,6 +4,9 @@
 
 # Generated graphs
 *.png
+*.svg
+*.dot
+*.gv
 
 # Python cache
 __pycache__/
@@ -12,9 +15,17 @@ __pycache__/
 # System files
 .DS_Store
 
-# Игнорировать все SVG файлы
-*.svg
+# Auto-generated test files
+test_*.txt
+test_*.json
+test_*.svg
+test_*.dot
 
-# Graphviz files
-*.dot
-*.gv
+# Test outputs
+test_output_*.svg
+test_output_*.dot
+*_github.svg
+*_github.dot
+*_analysis.svg
+*_deps.svg
+*_mixed.svg
