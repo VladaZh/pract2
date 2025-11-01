@@ -5,8 +5,7 @@ import json
 import requests
 from typing import Dict, Any, List, Set
 from collections import defaultdict
-import matplotlib.pyplot as plt
-import networkx as nx
+import graphviz
 
 
 class NPMPackageParser:
@@ -373,6 +372,43 @@ class DependencyGraph:
         dfs_detailed(start_package, level)
         return load_order
 
+    def generate_graphviz_dot(self, start_package: str) -> str:
+        """Генерирует представление графа на языке DOT"""
+        filtered_graph = self.get_filtered_graph()
+
+        dot_lines = [
+            "digraph Dependencies {",
+            "  rankdir=TB;",
+            "  node [shape=box, style=filled, fillcolor=lightblue];",
+            f'  "{start_package}" [fillcolor=lightcoral, shape=ellipse];'
+        ]
+
+        # Добавляем узлы и ребра
+        for package, deps in filtered_graph.items():
+            if deps:
+                for dep in deps:
+                    # Определяем цвет ребра для циклов
+                    edge_color = "red" if self._is_edge_in_cycle(package, dep) else "black"
+                    dot_lines.append(f'  "{package}" -> "{dep}" [color="{edge_color}"];')
+            else:
+                # Листовые узлы
+                if package != start_package:
+                    dot_lines.append(f'  "{package}" [fillcolor=lightgreen];')
+
+        dot_lines.append("}")
+        return "\n".join(dot_lines)
+
+    def _is_edge_in_cycle(self, source: str, target: str) -> bool:
+        """Проверяет, является ли ребро частью цикла"""
+        for cycle in self.cycles:
+            for i in range(len(cycle) - 1):
+                if cycle[i] == source and cycle[i + 1] == target:
+                    return True
+            # Проверяем замыкание цикла
+            if cycle[-1] == source and cycle[0] == target:
+                return True
+        return False
+
 
 class PackageManagerSimulator:
     """Симулятор менеджера пакетов для сравнения результатов"""
@@ -617,106 +653,30 @@ class DependencyVisualizer:
             print(f"  - {diff}")
 
     def visualize_dependency_graph(self):
-        """Визуализирует граф зависимостей"""
+        """Визуализирует граф зависимостей с помощью Graphviz"""
         try:
-            G = nx.DiGraph()
+            # Генерируем DOT представление
+            dot_source = self.dependency_graph.generate_graphviz_dot(self.config['package_name'])
 
-            # Используем отфильтрованный граф для визуализации
-            filtered_graph = self.dependency_graph.get_filtered_graph()
+            # Сохраняем DOT файл
+            dot_filename = self.config['output_file'].replace('.svg', '.dot')
+            with open(dot_filename, 'w', encoding='utf-8') as f:
+                f.write(dot_source)
+            print(f"Текстовое представление Graphviz сохранено в: {dot_filename}")
 
-            # Добавляем узлы и ребра из отфильтрованного графа
-            for package, dependencies in filtered_graph.items():
-                G.add_node(package)
-                for dep in dependencies:
-                    G.add_edge(package, dep)
+            # Создаем граф из DOT источника
+            dot = graphviz.Source(dot_source)
 
-            if len(G.nodes) == 0:
-                print("Нет узлов для визуализации после применения фильтра")
-                return
+            # Сохраняем в SVG
+            svg_filename = self.config['output_file'].replace('.png', '.svg')
+            dot.render(filename=svg_filename.replace('.svg', ''), format='svg', cleanup=True)
 
-            # Создаем визуализацию
-            plt.figure(figsize=(14, 10))
-
-            # Используем разные алгоритмы размещения для лучшего отображения
-            try:
-                if len(G.nodes) <= 8:
-                    pos = nx.spring_layout(G, k=3, iterations=100, seed=42)
-                elif len(G.nodes) <= 15:
-                    pos = nx.spring_layout(G, k=2, iterations=200, seed=42)
-                else:
-                    pos = nx.spring_layout(G, k=1.5, iterations=300, seed=42)
-            except:
-                # Fallback если spring_layout не работает
-                pos = nx.random_layout(G)
-
-            # Определяем цвета узлов в зависимости от их роли
-            node_colors = []
-            for node in G.nodes():
-                if node == self.config['package_name']:
-                    node_colors.append('lightcoral')  # Красный для корневого пакета
-                elif G.out_degree(node) == 0:
-                    node_colors.append('lightgreen')  # Зеленый для листьев
-                else:
-                    node_colors.append('lightblue')  # Синий для остальных
-
-            # Рисуем граф
-            nx.draw_networkx_nodes(G, pos, node_color=node_colors,
-                                   node_size=1200, alpha=0.9, linewidths=2,
-                                   edgecolors='black')
-
-            # Рисуем ребра с разными стилями для циклов
-            edge_colors = []
-            for edge in G.edges():
-                # Проверяем, является ли ребро частью цикла
-                if self.is_edge_in_cycle(edge[0], edge[1]):
-                    edge_colors.append('red')
-                else:
-                    edge_colors.append('gray')
-
-            nx.draw_networkx_edges(G, pos, edge_color=edge_colors,
-                                   arrows=True, arrowsize=25, alpha=0.8,
-                                   arrowstyle='->', width=2.5,
-                                   connectionstyle='arc3,rad=0.1')
-
-            nx.draw_networkx_labels(G, pos, font_size=9, font_weight='bold')
-
-            # Добавляем легенду
-            from matplotlib.patches import Patch
-            legend_elements = [
-                Patch(facecolor='lightcoral', label=f"Корневой пакет ({self.config['package_name']})"),
-                Patch(facecolor='lightblue', label='Промежуточные пакеты'),
-                Patch(facecolor='lightgreen', label='Конечные пакеты'),
-            ]
-            plt.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(0, 1))
-
-            plt.title(f"Граф зависимостей для '{self.config['package_name']}'\n"
-                      f"Всего узлов: {len(G.nodes)}, связей: {len(G.edges)}\n"
-                      f"Фильтр: '{self.config['filter_substring']}'",
-                      size=14, pad=20)
-            plt.axis('off')
-            plt.tight_layout()
-
-            # Сохраняем изображение
-            plt.savefig(self.config['output_file'], dpi=300, bbox_inches='tight')
-            plt.close()
-
-            print(f"Визуализация графа сохранена в {self.config['output_file']}")
+            print(f"Визуализация графа сохранена в: {svg_filename}")
 
         except Exception as e:
             print(f"Ошибка при визуализации графа: {e}")
             import traceback
             traceback.print_exc()
-
-    def is_edge_in_cycle(self, source: str, target: str) -> bool:
-        """Проверяет, является ли ребро частью цикла"""
-        for cycle in self.dependency_graph.cycles:
-            for i in range(len(cycle) - 1):
-                if cycle[i] == source and cycle[i + 1] == target:
-                    return True
-            # Проверяем замыкание цикла
-            if cycle[-1] == source and cycle[0] == target:
-                return True
-        return False
 
     def filter_dependencies(self, dependencies: Dict[str, str]) -> Dict[str, str]:
         if not self.config['filter_substring']:
@@ -821,7 +781,7 @@ def demonstrate_functionality():
 
     test_cases = [
         {
-            "name": "Линейный граф без фильтра",
+            "name": "Линейный граф",
             "package": "A",
             "repo": "test_linear.txt",
             "filter": "",
@@ -843,14 +803,6 @@ def demonstrate_functionality():
             "filter": "",
             "test_mode": True,
             "show_load_order": True
-        },
-        {
-            "name": "Сложный граф с фильтром 'L'",
-            "package": "A",
-            "repo": "test_complex.txt",
-            "filter": "L",
-            "test_mode": True,
-            "show_load_order": True
         }
     ]
 
@@ -862,7 +814,7 @@ def demonstrate_functionality():
         config = {
             'package_name': test_case['package'],
             'repository': test_case['repo'],
-            'output_file': f'test_output_{i}.png',
+            'output_file': f'test_output_{i}.svg',
             'test_mode': test_case['test_mode'],
             'filter_substring': test_case['filter'],
             'show_load_order': test_case['show_load_order']
@@ -894,8 +846,8 @@ def parse_arguments():
     parser.add_argument(
         '--output', '--output-file',
         dest='output_file',
-        default='dependency_graph.png',
-        help='Имя сгенерированного файла с изображением графа'
+        default='dependency_graph.svg',
+        help='Имя сгенерированного файла с изображением графа (SVG)'
     )
 
     parser.add_argument(
@@ -988,19 +940,23 @@ def main():
 if __name__ == "__main__":
     main()
 
-"""Команды для тестирования"""
-"""# Порядок загрузки для линейного графа
-python main.py --package A --repo test_linear.txt --test-mode --load-order
+"""
+Тесты
 
-# Порядок загрузки для ветвящегося графа
-python main.py --package A --repo test_branching.txt --test-mode --load-order --filter D
+# Демонстрация всех функций
+python main.py --demo
 
-# Циклический граф
-python main.py --package A --repo test_cyclic.json --test-mode --load-order
+# Отдельные тесты
+python main.py --package A --repo test_linear.txt --test-mode --output linear.svg
+python main.py --package A --repo test_branching.txt --test-mode --filter D --output branching.svg
+python main.py --package A --repo test_cyclic.json --test-mode --output cyclic.svg
 
-# Только анализ порядка без визуализации
-python main.py --package A --repo test_complex.txt --test-mode --load-order --no-viz
+# Пакет с production зависимостями (Express.js)
+python main.py --package express --repo https://github.com/expressjs/express --output express_deps.svg
 
-# GitHub
-python main.py --package create-react-app --repo https://registry.npmjs.org --output cra_deps.png
+# Пакет с mixed зависимостями (Vue.js)
+python main.py --package vue --repo https://github.com/vuejs/vue --output vue_mixed.svg
+
+# Пакет с TypeScript (много dev зависимостей)
+python main.py --package typescript --repo https://github.com/microsoft/TypeScript --output typescript_deps.svg
 """

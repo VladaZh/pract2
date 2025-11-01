@@ -11,3 +11,10 @@ __pycache__/
 
 # System files
 .DS_Store
+
+# Игнорировать все SVG файлы
+*.svg
+
+# Graphviz files
+*.dot
+*.gv

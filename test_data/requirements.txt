@@ -16,3 +16,6 @@ flask>=2.0.0
 # Для визуализации графов
 networkx>=2.8.0
 matplotlib>=3.5.0
+
+requests==2.31.0
+graphviz>=0.20.0
