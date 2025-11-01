@@ -1,0 +1,13 @@
+.idea/
+# Virtual environment
+.venv/
+
+# Generated graphs
+*.png
+
+# Python cache
+__pycache__/
+*.pyc
+
+# System files
+.DS_Store
