@@ -321,6 +321,109 @@ class DependencyGraph:
             else:
                 print(f"  {package} -> (нет зависимостей)")
 
+    def get_load_order(self, start_package: str) -> List[str]:
+        """Возвращает порядок загрузки зависимостей (топологическая сортировка)"""
+        if self.should_skip_package(start_package):
+            return []
+
+        visited = set()
+        load_order = []
+
+        def dfs_topological(node: str):
+            if self.should_skip_package(node) or node in visited:
+                return
+            visited.add(node)
+
+            # Сначала посещаем всех соседей (зависимости)
+            for neighbor in self.graph.get(node, []):
+                if not self.should_skip_package(neighbor):
+                    dfs_topological(neighbor)
+
+            # Затем добавляем текущий узел в порядок загрузки
+            load_order.append(node)
+
+        dfs_topological(start_package)
+        return load_order
+
+    def get_detailed_load_order(self, start_package: str) -> List[Dict[str, Any]]:
+        """Возвращает детализированный порядок загрузки с уровнями"""
+        if self.should_skip_package(start_package):
+            return []
+
+        visited = set()
+        load_order = []
+        level = 0
+
+        def dfs_detailed(node: str, current_level: int):
+            if self.should_skip_package(node) or node in visited:
+                return
+            visited.add(node)
+
+            # Добавляем узел с информацией об уровне
+            load_order.append({
+                'package': node,
+                'level': current_level
+            })
+
+            # Рекурсивно обходим зависимости с увеличенным уровнем
+            for neighbor in self.graph.get(node, []):
+                if not self.should_skip_package(neighbor):
+                    dfs_detailed(neighbor, current_level + 1)
+
+        dfs_detailed(start_package, level)
+        return load_order
+
+
+class PackageManagerSimulator:
+    """Симулятор менеджера пакетов для сравнения результатов"""
+
+    @staticmethod
+    def simulate_npm_install_order(dependencies: Dict[str, List[str]], package: str) -> List[str]:
+        """
+        Симулирует порядок установки как npm/yarn
+        npm обычно устанавливает зависимости в алфавитном порядке на каждом уровне
+        """
+        visited = set()
+        install_order = []
+
+        def dfs_npm(node: str):
+            if node in visited:
+                return
+            visited.add(node)
+
+            # Сортируем зависимости в алфавитном порядке как npm
+            sorted_deps = sorted(dependencies.get(node, []))
+            for dep in sorted_deps:
+                dfs_npm(dep)
+
+            install_order.append(node)
+
+        dfs_npm(package)
+        return install_order
+
+    @staticmethod
+    def simulate_pip_install_order(dependencies: Dict[str, List[str]], package: str) -> List[str]:
+        """
+        Симулирует порядок установки как pip
+        pip обычно устанавливает в порядке встречи зависимостей
+        """
+        visited = set()
+        install_order = []
+
+        def dfs_pip(node: str):
+            if node in visited:
+                return
+            visited.add(node)
+
+            # Оригинальный порядок зависимостей как в requirements
+            for dep in dependencies.get(node, []):
+                dfs_pip(dep)
+
+            install_order.append(node)
+
+        dfs_pip(package)
+        return install_order
+
 
 class DependencyVisualizer:
 
@@ -330,6 +433,7 @@ class DependencyVisualizer:
         self.npm_parser = NPMPackageParser()
         self.test_parser = TestRepositoryParser()
         self.dependency_graph = DependencyGraph()
+        self.package_manager_simulator = PackageManagerSimulator()
 
     def is_url(self, repository: str) -> bool:
         return repository.startswith(('http://', 'https://'))
@@ -396,8 +500,13 @@ class DependencyVisualizer:
             # Анализируем граф
             self.analyze_dependency_graph()
 
+            # Если включен режим порядка загрузки
+            if self.config.get('show_load_order', False):
+                self.analyze_load_order()
+
             # Визуализируем граф
-            self.visualize_dependency_graph()
+            if not self.config.get('no_visualization', False):
+                self.visualize_dependency_graph()
 
             print(f"\nРезультат сохранен в: {self.config['output_file']}")
 
@@ -427,9 +536,7 @@ class DependencyVisualizer:
         # Выводим структуру графа для отладки
         self.dependency_graph.print_graph()
 
-        print(f"\n{'=' * 50}")
         print("АНАЛИЗ ГРАФА ЗАВИСИМОСТЕЙ")
-        print(f"{'=' * 50}")
 
         # Поиск циклов
         cycles = self.dependency_graph.find_all_cycles()
@@ -452,6 +559,62 @@ class DependencyVisualizer:
         # Полный граф зависимостей
         complete_graph = self.dependency_graph.build_complete_dependency_graph([self.config['package_name']])
         print(f"\nПолный граф зависимостей построен для {len(complete_graph)} пакетов")
+
+    def analyze_load_order(self):
+        """Анализирует и сравнивает порядок загрузки зависимостей"""
+        print("АНАЛИЗ ПОРЯДКА ЗАГРУЗКИ ЗАВИСИМОСТЕЙ")
+
+        # Порядок загрузки нашим алгоритмом
+        load_order = self.dependency_graph.get_load_order(self.config['package_name'])
+        detailed_order = self.dependency_graph.get_detailed_load_order(self.config['package_name'])
+
+        print(f"\nПорядок загрузки для '{self.config['package_name']}':")
+        print("(глубина -> пакет)")
+        for item in detailed_order:
+            level_indent = "  " * item['level']
+            print(f"{level_indent}L{item['level']} -> {item['package']}")
+
+        print(f"\nЛинейный порядок загрузки: {' -> '.join(load_order)}")
+
+        # Сравнение с менеджерами пакетов
+        if self.config['test_mode']:
+            self.compare_with_package_managers()
+
+    def compare_with_package_managers(self):
+        """Сравнивает наш порядок загрузки с симуляцией менеджеров пакетов"""
+        print("СРАВНЕНИЕ С МЕНЕДЖЕРАМИ ПАКЕТОВ")
+
+        # Наш порядок
+        our_order = self.dependency_graph.get_load_order(self.config['package_name'])
+
+        # Симуляция npm
+        npm_order = self.package_manager_simulator.simulate_npm_install_order(
+            dict(self.dependency_graph.graph),
+            self.config['package_name']
+        )
+
+        # Симуляция pip
+        pip_order = self.package_manager_simulator.simulate_pip_install_order(
+            dict(self.dependency_graph.graph),
+            self.config['package_name']
+        )
+
+        print(f"\nНаш алгоритм:    {' -> '.join(our_order)}")
+        print(f"NPM-подобный:    {' -> '.join(npm_order)}")
+        print(f"PIP-подобный:    {' -> '.join(pip_order)}")
+
+        # Анализ расхождений
+        differences = []
+        if our_order != npm_order:
+            differences.append("NPM сортирует зависимости алфавитно на каждом уровне")
+        if our_order != pip_order:
+            differences.append("PIP сохраняет оригинальный порядок зависимостей")
+        if our_order == npm_order == pip_order:
+            differences.append("Все алгоритмы дают одинаковый результат")
+
+        print(f"\nРасхождения:")
+        for diff in differences:
+            print(f"  - {diff}")
 
     def visualize_dependency_graph(self):
         """Визуализирует граф зависимостей"""
@@ -651,9 +814,7 @@ O:"""
 
 def demonstrate_functionality():
     """Демонстрирует функциональность на различных тестовых случаях"""
-    print("\n" + "=" * 60)
     print("ДЕМОНСТРАЦИЯ ФУНКЦИОНАЛЬНОСТИ")
-    print("=" * 60)
 
     # Создаем тестовые файлы
     create_test_files()
@@ -664,28 +825,32 @@ def demonstrate_functionality():
             "package": "A",
             "repo": "test_linear.txt",
             "filter": "",
-            "test_mode": True
+            "test_mode": True,
+            "show_load_order": True
         },
         {
             "name": "Ветвящийся граф с фильтром 'D'",
             "package": "A",
             "repo": "test_branching.txt",
             "filter": "D",
-            "test_mode": True
+            "test_mode": True,
+            "show_load_order": True
         },
         {
             "name": "Циклический граф",
             "package": "A",
             "repo": "test_cyclic.json",
             "filter": "",
-            "test_mode": True
+            "test_mode": True,
+            "show_load_order": True
         },
         {
             "name": "Сложный граф с фильтром 'L'",
             "package": "A",
             "repo": "test_complex.txt",
             "filter": "L",
-            "test_mode": True
+            "test_mode": True,
+            "show_load_order": True
         }
     ]
 
@@ -699,7 +864,8 @@ def demonstrate_functionality():
             'repository': test_case['repo'],
             'output_file': f'test_output_{i}.png',
             'test_mode': test_case['test_mode'],
-            'filter_substring': test_case['filter']
+            'filter_substring': test_case['filter'],
+            'show_load_order': test_case['show_load_order']
         }
 
         visualizer = DependencyVisualizer(config)
@@ -755,6 +921,22 @@ def parse_arguments():
         help='Запуск демонстрации на тестовых данных'
     )
 
+    parser.add_argument(
+        '--load-order',
+        dest='show_load_order',
+        action='store_true',
+        default=False,
+        help='Показать порядок загрузки зависимостей и сравнить с менеджерами пакетов'
+    )
+
+    parser.add_argument(
+        '--no-viz',
+        dest='no_visualization',
+        action='store_true',
+        default=False,
+        help='Не создавать визуализацию графа'
+    )
+
     return parser.parse_args()
 
 
@@ -777,7 +959,9 @@ def main():
             'repository': args.repository,
             'output_file': args.output_file,
             'test_mode': args.test_mode,
-            'filter_substring': args.filter_substring
+            'filter_substring': args.filter_substring,
+            'show_load_order': args.show_load_order,
+            'no_visualization': args.no_visualization
         }
 
         visualizer = DependencyVisualizer(config)
@@ -805,17 +989,18 @@ if __name__ == "__main__":
     main()
 
 """Команды для тестирования"""
-"""# Линейный
-python main.py --package A --repo test_linear.txt --test-mode --output linear.png
+"""# Порядок загрузки для линейного графа
+python main.py --package A --repo test_linear.txt --test-mode --load-order
 
-# Ветвящийся с фильтром
-python main.py --package A --repo test_branching.txt --test-mode --filter D --output branching_filtered.png
+# Порядок загрузки для ветвящегося графа
+python main.py --package A --repo test_branching.txt --test-mode --load-order --filter D
 
-# Циклический
-python main.py --package A --repo test_cyclic.json --test-mode --output cyclic.png
+# Циклический граф
+python main.py --package A --repo test_cyclic.json --test-mode --load-order
 
-# Сложный с фильтром L
-python main.py --package A --repo test_complex.txt --test-mode --filter L --output complex_filtered_L.png
+# Только анализ порядка без визуализации
+python main.py --package A --repo test_complex.txt --test-mode --load-order --no-viz
 
-# Сложный с фильтром H
-python main.py --package A --repo test_complex.txt --test-mode --filter H --output complex_filtered_H.png"""
+# GitHub
+python main.py --package create-react-app --repo https://registry.npmjs.org --output cra_deps.png
+"""
