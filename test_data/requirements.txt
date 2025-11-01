@@ -12,4 +12,7 @@ matplotlib>=3.5.0
 # Веб-фреймворк
 django>=4.2.0
 flask>=2.0.0
-EOF
+
+# Для визуализации графов
+networkx>=2.8.0
+matplotlib>=3.5.0

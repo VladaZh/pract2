@@ -3,7 +3,10 @@ import sys
 import os
 import json
 import requests
-from typing import Dict, Any
+from typing import Dict, Any, List, Set, Tuple
+from collections import defaultdict
+import matplotlib.pyplot as plt
+import networkx as nx
 
 
 class NPMPackageParser:
@@ -108,12 +111,199 @@ class URLRepositoryParser:
         return dependencies
 
 
+class TestRepositoryParser:
+    """Парсер для тестового репозитория с пакетами в виде больших латинских букв"""
+
+    def __init__(self):
+        self.test_graphs = self._create_test_graphs()
+
+    def _create_test_graphs(self) -> Dict[str, Dict[str, List[str]]]:
+        """Создает тестовые графы зависимостей"""
+        return {
+            # Простой линейный граф: A -> B -> C -> D
+            "linear": {
+                "A": ["B"],
+                "B": ["C"],
+                "C": ["D"],
+                "D": []
+            },
+            # Граф с ветвлением: A -> [B, C], B -> D, C -> D
+            "branching": {
+                "A": ["B", "C"],
+                "B": ["D"],
+                "C": ["D"],
+                "D": []
+            },
+            # Циклический граф: A -> B -> C -> A
+            "cyclic": {
+                "A": ["B"],
+                "B": ["C"],
+                "C": ["A"]
+            },
+            # Сложный граф с несколькими циклами
+            "complex": {
+                "A": ["B", "C"],
+                "B": ["D", "E"],
+                "C": ["F"],
+                "D": ["G", "H"],
+                "E": ["H", "I"],
+                "F": ["I", "J"],
+                "G": ["K"],
+                "H": ["K", "L"],
+                "I": ["L", "M"],
+                "J": ["M"],
+                "K": ["N"],
+                "L": ["N"],
+                "M": ["N"],
+                "N": []
+            },
+            # Граф с самозависимостью
+            "self_cyclic": {
+                "A": ["A", "B"],
+                "B": ["C"],
+                "C": []
+            }
+        }
+
+    def parse_test_file(self, file_path: str) -> Dict[str, List[str]]:
+        """Парсит тестовый файл с описанием графа"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+
+            # Поддерживаем два формата: JSON и простой текстовый
+            if content.startswith('{'):
+                # JSON формат
+                graph_data = json.loads(content)
+                # Преобразуем в нужный формат (списки зависимостей)
+                result = {}
+                for package, deps in graph_data.items():
+                    if isinstance(deps, list):
+                        result[package] = deps
+                    elif isinstance(deps, dict):
+                        result[package] = list(deps.keys())
+                    else:
+                        result[package] = []
+                return result
+            else:
+                # Простой текстовый формат: каждая строка "ПАКЕТ: ЗАВИСИМОСТИ"
+                graph = defaultdict(list)
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+
+                    if ':' in line:
+                        package, deps_str = line.split(':', 1)
+                        package = package.strip()
+                        deps = [dep.strip() for dep in deps_str.split(',') if dep.strip()]
+                        graph[package] = deps
+                    else:
+                        # Если нет двоеточия, считаем пакетом без зависимостей
+                        graph[line.strip()] = []
+
+                return dict(graph)
+
+        except Exception as e:
+            raise ValueError(f"Ошибка чтения тестового файла: {e}")
+
+
+class DependencyGraph:
+    """Класс для работы с графом зависимостей"""
+
+    def __init__(self):
+        self.graph = defaultdict(list)
+        self.visited = set()
+        self.recursion_stack = set()
+        self.cycles = []
+        self.filter_substring = ""
+
+    def add_dependency(self, package: str, dependency: str):
+        """Добавляет зависимость в граф"""
+        if dependency not in self.graph[package]:
+            self.graph[package].append(dependency)
+
+    def should_skip_package(self, package: str) -> bool:
+        """Проверяет, нужно ли пропустить пакет согласно фильтру"""
+        if not self.filter_substring:
+            return False
+        return self.filter_substring.lower() in package.lower()
+
+    def dfs_with_cycles_detection(self, node: str, path: List[str]):
+        """Рекурсивный DFS с обнаружением циклов"""
+        if self.should_skip_package(node):
+            return
+
+        if node in self.recursion_stack:
+            # Найден цикл
+            cycle_start = path.index(node)
+            cycle = path[cycle_start:] + [node]
+            self.cycles.append(cycle)
+            return
+
+        if node in self.visited:
+            return
+
+        self.visited.add(node)
+        self.recursion_stack.add(node)
+        path.append(node)
+
+        # Рекурсивно обходим зависимости
+        for neighbor in self.graph.get(node, []):
+            if not self.should_skip_package(neighbor):
+                self.dfs_with_cycles_detection(neighbor, path.copy())
+
+        self.recursion_stack.remove(node)
+        path.pop()
+
+    def find_all_cycles(self) -> List[List[str]]:
+        """Находит все циклы в графе"""
+        self.visited.clear()
+        self.recursion_stack.clear()
+        self.cycles.clear()
+
+        for node in list(self.graph.keys()):
+            if node not in self.visited and not self.should_skip_package(node):
+                self.dfs_with_cycles_detection(node, [])
+
+        return self.cycles
+
+    def get_transitive_dependencies(self, start_package: str) -> Set[str]:
+        """Получает все транзитивные зависимости для пакета"""
+        if self.should_skip_package(start_package):
+            return set()
+
+        visited = set()
+
+        def dfs_transitive(node: str):
+            if self.should_skip_package(node) or node in visited:
+                return
+            visited.add(node)
+            for neighbor in self.graph.get(node, []):
+                if not self.should_skip_package(neighbor):
+                    dfs_transitive(neighbor)
+
+        dfs_transitive(start_package)
+        visited.discard(start_package)  # Убираем стартовый пакет из результата
+        return visited
+
+    def build_complete_dependency_graph(self, start_packages: List[str]) -> Dict[str, Set[str]]:
+        """Строит полный граф зависимостей для начальных пакетов"""
+        result = {}
+        for package in start_packages:
+            if not self.should_skip_package(package):
+                result[package] = self.get_transitive_dependencies(package)
+        return result
+
+
 class DependencyVisualizer:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.url_parser = URLRepositoryParser()
         self.npm_parser = NPMPackageParser()
+        self.test_parser = TestRepositoryParser()
+        self.dependency_graph = DependencyGraph()
 
     def is_url(self, repository: str) -> bool:
         return repository.startswith(('http://', 'https://'))
@@ -145,29 +335,130 @@ class DependencyVisualizer:
         print(f"Источник: {self.config['repository']}")
 
         try:
-            if self.is_url(self.config['repository']):
-                print("Режим: URL репозитория")
-                dependencies = self.url_parser.parse_from_url(
-                    self.config['repository'],
-                    self.config['package_name']
-                )
-            else:
-                print("Режим: Локальный файл")
-                dependencies = self.npm_parser.get_dependencies(self.config['package_name'])
+            dependencies_data = {}
 
+            if self.config['test_mode']:
+                print("Режим: Тестовый репозиторий")
+                if self.is_url(self.config['repository']):
+                    # Для тестового режима с URL используем предопределенные графы
+                    graph_name = self.config['repository'].split('/')[-1]
+                    dependencies_data = self.test_parser.test_graphs.get(graph_name, {})
+                else:
+                    # Чтение из файла
+                    dependencies_data = self.test_parser.parse_test_file(self.config['repository'])
+            else:
+                if self.is_url(self.config['repository']):
+                    print("Режим: URL репозитория")
+                    dependencies_data = self.url_parser.parse_from_url(
+                        self.config['repository'],
+                        self.config['package_name']
+                    )
+                else:
+                    print("Режим: Локальный файл")
+                    dependencies_data = self.npm_parser.get_dependencies(self.config['package_name'])
+
+            # Строим граф зависимостей
+            self.build_dependency_graph(dependencies_data)
+
+            # Применяем фильтр если указан
             if self.config['filter_substring']:
-                dependencies = self.filter_dependencies(dependencies)
+                self.dependency_graph.filter_substring = self.config['filter_substring']
                 print(f"Применен фильтр: '{self.config['filter_substring']}'")
 
-            self.display_direct_dependencies(dependencies)
+            # Анализируем граф
+            self.analyze_dependency_graph()
 
-            print(f"\nРезультат будет сохранен в: {self.config['output_file']}")
+            # Визуализируем граф
+            self.visualize_dependency_graph()
+
+            print(f"\nРезультат сохранен в: {self.config['output_file']}")
 
         except ValueError as e:
             print(f"Ошибка анализа: {e}")
             return False
 
         return True
+
+    def build_dependency_graph(self, dependencies_data: Dict[str, Any]):
+        """Строит граф зависимостей из полученных данных"""
+        if isinstance(dependencies_data, dict):
+            # Для реальных зависимостей npm
+            for package, version in dependencies_data.items():
+                self.dependency_graph.add_dependency(self.config['package_name'], package)
+                # В реальной реализации здесь был бы рекурсивный вызов для получения зависимостей зависимостей
+        else:
+            # Для тестовых данных (уже граф)
+            for package, deps in dependencies_data.items():
+                for dep in deps:
+                    self.dependency_graph.add_dependency(package, dep)
+
+    def analyze_dependency_graph(self):
+        """Анализирует граф зависимостей"""
+        print(f"\n{'=' * 50}")
+        print("АНАЛИЗ ГРАФА ЗАВИСИМОСТЕЙ")
+        print(f"{'=' * 50}")
+
+        # Поиск циклов
+        cycles = self.dependency_graph.find_all_cycles()
+        if cycles:
+            print(f"\nОбнаружено циклических зависимостей: {len(cycles)}")
+            for i, cycle in enumerate(cycles, 1):
+                print(f"Цикл {i}: {' -> '.join(cycle)}")
+        else:
+            print("\nЦиклические зависимости не обнаружены")
+
+        # Транзитивные зависимости
+        transitive_deps = self.dependency_graph.get_transitive_dependencies(self.config['package_name'])
+        print(f"\nТранзитивные зависимости для '{self.config['package_name']}': {len(transitive_deps)}")
+        if transitive_deps:
+            for dep in sorted(transitive_deps):
+                print(f"  - {dep}")
+
+        # Полный граф зависимостей
+        complete_graph = self.dependency_graph.build_complete_dependency_graph([self.config['package_name']])
+        print(f"\nПолный граф зависимостей построен для {len(complete_graph)} пакетов")
+
+    def visualize_dependency_graph(self):
+        """Визуализирует граф зависимостей"""
+        try:
+            G = nx.DiGraph()
+
+            # Добавляем узлы и ребра
+            for package, dependencies in self.dependency_graph.graph.items():
+                if self.dependency_graph.should_skip_package(package):
+                    continue
+                G.add_node(package)
+                for dep in dependencies:
+                    if not self.dependency_graph.should_skip_package(dep):
+                        G.add_edge(package, dep)
+
+            # Создаем визуализацию
+            plt.figure(figsize=(12, 8))
+            pos = nx.spring_layout(G, k=1, iterations=50)
+
+            # Рисуем граф
+            nx.draw_networkx_nodes(G, pos, node_color='lightblue',
+                                   node_size=500, alpha=0.9)
+            nx.draw_networkx_edges(G, pos, edge_color='gray',
+                                   arrows=True, arrowsize=20, alpha=0.7)
+            nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold')
+
+            plt.title(f"Граф зависимостей для {self.config['package_name']}\n"
+                      f"Фильтр: '{self.config['filter_substring']}'",
+                      size=14, pad=20)
+            plt.axis('off')
+            plt.tight_layout()
+
+            # Сохраняем изображение
+            plt.savefig(self.config['output_file'], dpi=300, bbox_inches='tight')
+            plt.close()
+
+            print(f"Визуализация графа сохранена в {self.config['output_file']}")
+
+        except ImportError:
+            print("Предупреждение: matplotlib или networkx не установлены, визуализация невозможна")
+        except Exception as e:
+            print(f"Ошибка при визуализации графа: {e}")
 
     def filter_dependencies(self, dependencies: Dict[str, str]) -> Dict[str, str]:
         if not self.config['filter_substring']:
@@ -211,6 +502,115 @@ class DependencyVisualizer:
         print("")
 
 
+def create_test_files():
+    """Создает тестовые файлы для демонстрации"""
+    test_files = {
+        "test_linear.txt": """A: B
+B: C
+C: D
+D:""",
+
+        "test_branching.txt": """A: B, C
+B: D
+C: D, E
+D: F
+E: F
+F:""",
+
+        "test_cyclic.json": {
+            "A": ["B"],
+            "B": ["C"],
+            "C": ["A", "D"],
+            "D": []
+        },
+
+        "test_complex.txt": """A: B, C
+B: D, E
+C: F, G
+D: H
+E: H, I
+F: I, J
+G: K
+H: L
+I: L, M
+J: N
+K: N
+L: O
+M: O
+N: O
+O:"""
+    }
+
+    for filename, content in test_files.items():
+        try:
+            if filename.endswith('.json'):
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(content, f, indent=2)
+            else:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            print(f"Создан тестовый файл: {filename}")
+        except Exception as e:
+            print(f"Ошибка создания файла {filename}: {e}")
+
+
+def demonstrate_functionality():
+    """Демонстрирует функциональность на различных тестовых случаях"""
+    print("\n" + "=" * 60)
+    print("ДЕМОНСТРАЦИЯ ФУНКЦИОНАЛЬНОСТИ")
+    print("=" * 60)
+
+    # Создаем тестовые файлы
+    create_test_files()
+
+    test_cases = [
+        {
+            "name": "Линейный граф без фильтра",
+            "package": "A",
+            "repo": "test_linear.txt",
+            "filter": "",
+            "test_mode": True
+        },
+        {
+            "name": "Ветвящийся граф с фильтром 'D'",
+            "package": "A",
+            "repo": "test_branching.txt",
+            "filter": "D",
+            "test_mode": True
+        },
+        {
+            "name": "Циклический граф",
+            "package": "A",
+            "repo": "test_cyclic.json",
+            "filter": "",
+            "test_mode": True
+        },
+        {
+            "name": "Сложный граф с фильтром 'L'",
+            "package": "A",
+            "repo": "test_complex.txt",
+            "filter": "L",
+            "test_mode": True
+        }
+    ]
+
+    for i, test_case in enumerate(test_cases, 1):
+        print(f"\n{'─' * 50}")
+        print(f"ТЕСТ {i}: {test_case['name']}")
+        print(f"{'─' * 50}")
+
+        config = {
+            'package_name': test_case['package'],
+            'repository': test_case['repo'],
+            'output_file': f'test_output_{i}.png',
+            'test_mode': test_case['test_mode'],
+            'filter_substring': test_case['filter']
+        }
+
+        visualizer = DependencyVisualizer(config)
+        visualizer.analyze_dependencies()
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Инструмент визуализации графа зависимостей пакетов',
@@ -252,12 +652,24 @@ def parse_arguments():
         help='Подстрока для фильтрации пакетов'
     )
 
+    parser.add_argument(
+        '--demo',
+        dest='demo_mode',
+        action='store_true',
+        default=False,
+        help='Запуск демонстрации на тестовых данных'
+    )
+
     return parser.parse_args()
 
 
 def main():
     try:
         args = parse_arguments()
+
+        if args.demo_mode:
+            demonstrate_functionality()
+            return
 
         config = {
             'package_name': args.package_name,
