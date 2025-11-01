@@ -229,6 +229,16 @@ class DependencyGraph:
             return False
         return self.filter_substring.lower() in package.lower()
 
+    def get_filtered_graph(self) -> Dict[str, List[str]]:
+        """Возвращает отфильтрованную версию графа"""
+        filtered_graph = {}
+        for package, deps in self.graph.items():
+            if self.should_skip_package(package):
+                continue
+            filtered_deps = [dep for dep in deps if not self.should_skip_package(dep)]
+            filtered_graph[package] = filtered_deps
+        return filtered_graph
+
     def dfs_with_cycles_detection(self, node: str, path: List[str]):
         """Рекурсивный DFS с обнаружением циклов"""
         if self.should_skip_package(node):
@@ -298,12 +308,14 @@ class DependencyGraph:
 
     def print_graph(self):
         """Выводит граф для отладки"""
-        print("\nСТРУКТУРА ГРАФА:")
-        if not self.graph:
-            print("  Граф пуст")
+        print("\nСТРУКТУРА ГРАФА (после фильтрации):")
+        filtered_graph = self.get_filtered_graph()
+
+        if not filtered_graph:
+            print("  Граф пуст после применения фильтра")
             return
 
-        for package, deps in sorted(self.graph.items()):
+        for package, deps in sorted(filtered_graph.items()):
             if deps:
                 print(f"  {package} -> {', '.join(sorted(deps))}")
             else:
@@ -446,14 +458,14 @@ class DependencyVisualizer:
         try:
             G = nx.DiGraph()
 
-            # Добавляем узлы и ребра
-            for package, dependencies in self.dependency_graph.graph.items():
-                if self.dependency_graph.should_skip_package(package):
-                    continue
+            # Используем отфильтрованный граф для визуализации
+            filtered_graph = self.dependency_graph.get_filtered_graph()
+
+            # Добавляем узлы и ребра из отфильтрованного графа
+            for package, dependencies in filtered_graph.items():
                 G.add_node(package)
                 for dep in dependencies:
-                    if not self.dependency_graph.should_skip_package(dep):
-                        G.add_edge(package, dep)
+                    G.add_edge(package, dep)
 
             if len(G.nodes) == 0:
                 print("Нет узлов для визуализации после применения фильтра")
@@ -465,11 +477,11 @@ class DependencyVisualizer:
             # Используем разные алгоритмы размещения для лучшего отображения
             try:
                 if len(G.nodes) <= 8:
-                    pos = nx.spring_layout(G, k=3, iterations=100)
+                    pos = nx.spring_layout(G, k=3, iterations=100, seed=42)
                 elif len(G.nodes) <= 15:
-                    pos = nx.spring_layout(G, k=2, iterations=200)
+                    pos = nx.spring_layout(G, k=2, iterations=200, seed=42)
                 else:
-                    pos = nx.spring_layout(G, k=1.5, iterations=300)
+                    pos = nx.spring_layout(G, k=1.5, iterations=300, seed=42)
             except:
                 # Fallback если spring_layout не работает
                 pos = nx.random_layout(G)
@@ -479,7 +491,7 @@ class DependencyVisualizer:
             for node in G.nodes():
                 if node == self.config['package_name']:
                     node_colors.append('lightcoral')  # Красный для корневого пакета
-                elif G.in_degree(node) == 0 and G.out_degree(node) > 0:
+                elif G.out_degree(node) == 0:
                     node_colors.append('lightgreen')  # Зеленый для листьев
                 else:
                     node_colors.append('lightblue')  # Синий для остальных
@@ -791,3 +803,19 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""Команды для тестирования"""
+"""# Линейный
+python main.py --package A --repo test_linear.txt --test-mode --output linear.png
+
+# Ветвящийся с фильтром
+python main.py --package A --repo test_branching.txt --test-mode --filter D --output branching_filtered.png
+
+# Циклический
+python main.py --package A --repo test_cyclic.json --test-mode --output cyclic.png
+
+# Сложный с фильтром L
+python main.py --package A --repo test_complex.txt --test-mode --filter L --output complex_filtered_L.png
+
+# Сложный с фильтром H
+python main.py --package A --repo test_complex.txt --test-mode --filter H --output complex_filtered_H.png"""
