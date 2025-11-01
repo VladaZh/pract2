@@ -3,7 +3,7 @@ import sys
 import os
 import json
 import requests
-from typing import Dict, Any, List, Set, Tuple
+from typing import Dict, Any, List, Set
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -220,7 +220,7 @@ class DependencyGraph:
 
     def add_dependency(self, package: str, dependency: str):
         """Добавляет зависимость в граф"""
-        if dependency not in self.graph[package]:
+        if dependency and dependency not in self.graph[package]:
             self.graph[package].append(dependency)
 
     def should_skip_package(self, package: str) -> bool:
@@ -238,7 +238,8 @@ class DependencyGraph:
             # Найден цикл
             cycle_start = path.index(node)
             cycle = path[cycle_start:] + [node]
-            self.cycles.append(cycle)
+            if cycle not in self.cycles:
+                self.cycles.append(cycle)
             return
 
         if node in self.visited:
@@ -295,6 +296,19 @@ class DependencyGraph:
                 result[package] = self.get_transitive_dependencies(package)
         return result
 
+    def print_graph(self):
+        """Выводит граф для отладки"""
+        print("\nСТРУКТУРА ГРАФА:")
+        if not self.graph:
+            print("  Граф пуст")
+            return
+
+        for package, deps in sorted(self.graph.items()):
+            if deps:
+                print(f"  {package} -> {', '.join(sorted(deps))}")
+            else:
+                print(f"  {package} -> (нет зависимостей)")
+
 
 class DependencyVisualizer:
 
@@ -343,9 +357,11 @@ class DependencyVisualizer:
                     # Для тестового режима с URL используем предопределенные графы
                     graph_name = self.config['repository'].split('/')[-1]
                     dependencies_data = self.test_parser.test_graphs.get(graph_name, {})
+                    print(f"Используется встроенный граф: {graph_name}")
                 else:
                     # Чтение из файла
                     dependencies_data = self.test_parser.parse_test_file(self.config['repository'])
+                    print(f"Прочитан граф из файла: {self.config['repository']}")
             else:
                 if self.is_url(self.config['repository']):
                     print("Режим: URL репозитория")
@@ -381,19 +397,24 @@ class DependencyVisualizer:
 
     def build_dependency_graph(self, dependencies_data: Dict[str, Any]):
         """Строит граф зависимостей из полученных данных"""
-        if isinstance(dependencies_data, dict):
-            # Для реальных зависимостей npm
-            for package, version in dependencies_data.items():
-                self.dependency_graph.add_dependency(self.config['package_name'], package)
-                # В реальной реализации здесь был бы рекурсивный вызов для получения зависимостей зависимостей
-        else:
-            # Для тестовых данных (уже граф)
+        if self.config['test_mode']:
+            # Для тестовых данных (уже готовый граф)
+            print("Построение графа из тестовых данных...")
             for package, deps in dependencies_data.items():
                 for dep in deps:
-                    self.dependency_graph.add_dependency(package, dep)
+                    if dep:  # проверяем, что зависимость не пустая
+                        self.dependency_graph.add_dependency(package, dep)
+        else:
+            # Для реальных npm зависимостей
+            print("Построение графа из npm зависимостей...")
+            for package, version in dependencies_data.items():
+                self.dependency_graph.add_dependency(self.config['package_name'], package)
 
     def analyze_dependency_graph(self):
         """Анализирует граф зависимостей"""
+        # Выводим структуру графа для отладки
+        self.dependency_graph.print_graph()
+
         print(f"\n{'=' * 50}")
         print("АНАЛИЗ ГРАФА ЗАВИСИМОСТЕЙ")
         print(f"{'=' * 50}")
@@ -413,6 +434,8 @@ class DependencyVisualizer:
         if transitive_deps:
             for dep in sorted(transitive_deps):
                 print(f"  - {dep}")
+        else:
+            print("  (нет транзитивных зависимостей)")
 
         # Полный граф зависимостей
         complete_graph = self.dependency_graph.build_complete_dependency_graph([self.config['package_name']])
@@ -432,16 +455,26 @@ class DependencyVisualizer:
                     if not self.dependency_graph.should_skip_package(dep):
                         G.add_edge(package, dep)
 
+            if len(G.nodes) == 0:
+                print("Нет узлов для визуализации после применения фильтра")
+                return
+
             # Создаем визуализацию
             plt.figure(figsize=(12, 8))
-            pos = nx.spring_layout(G, k=1, iterations=50)
+
+            # Используем разные алгоритмы размещения для лучшего отображения
+            if len(G.nodes) <= 10:
+                pos = nx.spring_layout(G, k=2, iterations=50)
+            else:
+                pos = nx.kamada_kawai_layout(G)
 
             # Рисуем граф
             nx.draw_networkx_nodes(G, pos, node_color='lightblue',
-                                   node_size=500, alpha=0.9)
+                                   node_size=800, alpha=0.9, linewidths=2)
             nx.draw_networkx_edges(G, pos, edge_color='gray',
-                                   arrows=True, arrowsize=20, alpha=0.7)
-            nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold')
+                                   arrows=True, arrowsize=20, alpha=0.7,
+                                   arrowstyle='->', width=2)
+            nx.draw_networkx_labels(G, pos, font_size=10, font_weight='bold')
 
             plt.title(f"Граф зависимостей для {self.config['package_name']}\n"
                       f"Фильтр: '{self.config['filter_substring']}'",
@@ -455,8 +488,6 @@ class DependencyVisualizer:
 
             print(f"Визуализация графа сохранена в {self.config['output_file']}")
 
-        except ImportError:
-            print("Предупреждение: matplotlib или networkx не установлены, визуализация невозможна")
         except Exception as e:
             print(f"Ошибка при визуализации графа: {e}")
 
@@ -619,14 +650,14 @@ def parse_arguments():
     parser.add_argument(
         '--package', '--package-name',
         dest='package_name',
-        required=True,
+        required=False,
         help='Имя анализируемого npm пакета'
     )
 
     parser.add_argument(
         '--repo', '--repository',
         dest='repository',
-        required=True,
+        required=False,
         help='URL npm registry или GitHub репозитория, либо путь к локальному файлу'
     )
 
@@ -670,6 +701,12 @@ def main():
         if args.demo_mode:
             demonstrate_functionality()
             return
+
+        # Проверяем, что для не-demo режима указаны обязательные аргументы
+        if not args.package_name or not args.repository:
+            print("Ошибка: для обычного режима необходимо указать --package и --repo")
+            print("Используйте --demo для демонстрационного режима")
+            sys.exit(1)
 
         config = {
             'package_name': args.package_name,
