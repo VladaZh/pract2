@@ -460,23 +460,62 @@ class DependencyVisualizer:
                 return
 
             # Создаем визуализацию
-            plt.figure(figsize=(12, 8))
+            plt.figure(figsize=(14, 10))
 
             # Используем разные алгоритмы размещения для лучшего отображения
-            if len(G.nodes) <= 10:
-                pos = nx.spring_layout(G, k=2, iterations=50)
-            else:
-                pos = nx.kamada_kawai_layout(G)
+            try:
+                if len(G.nodes) <= 8:
+                    pos = nx.spring_layout(G, k=3, iterations=100)
+                elif len(G.nodes) <= 15:
+                    pos = nx.spring_layout(G, k=2, iterations=200)
+                else:
+                    pos = nx.spring_layout(G, k=1.5, iterations=300)
+            except:
+                # Fallback если spring_layout не работает
+                pos = nx.random_layout(G)
+
+            # Определяем цвета узлов в зависимости от их роли
+            node_colors = []
+            for node in G.nodes():
+                if node == self.config['package_name']:
+                    node_colors.append('lightcoral')  # Красный для корневого пакета
+                elif G.in_degree(node) == 0 and G.out_degree(node) > 0:
+                    node_colors.append('lightgreen')  # Зеленый для листьев
+                else:
+                    node_colors.append('lightblue')  # Синий для остальных
 
             # Рисуем граф
-            nx.draw_networkx_nodes(G, pos, node_color='lightblue',
-                                   node_size=800, alpha=0.9, linewidths=2)
-            nx.draw_networkx_edges(G, pos, edge_color='gray',
-                                   arrows=True, arrowsize=20, alpha=0.7,
-                                   arrowstyle='->', width=2)
-            nx.draw_networkx_labels(G, pos, font_size=10, font_weight='bold')
+            nx.draw_networkx_nodes(G, pos, node_color=node_colors,
+                                   node_size=1200, alpha=0.9, linewidths=2,
+                                   edgecolors='black')
 
-            plt.title(f"Граф зависимостей для {self.config['package_name']}\n"
+            # Рисуем ребра с разными стилями для циклов
+            edge_colors = []
+            for edge in G.edges():
+                # Проверяем, является ли ребро частью цикла
+                if self.is_edge_in_cycle(edge[0], edge[1]):
+                    edge_colors.append('red')
+                else:
+                    edge_colors.append('gray')
+
+            nx.draw_networkx_edges(G, pos, edge_color=edge_colors,
+                                   arrows=True, arrowsize=25, alpha=0.8,
+                                   arrowstyle='->', width=2.5,
+                                   connectionstyle='arc3,rad=0.1')
+
+            nx.draw_networkx_labels(G, pos, font_size=9, font_weight='bold')
+
+            # Добавляем легенду
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor='lightcoral', label=f"Корневой пакет ({self.config['package_name']})"),
+                Patch(facecolor='lightblue', label='Промежуточные пакеты'),
+                Patch(facecolor='lightgreen', label='Конечные пакеты'),
+            ]
+            plt.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(0, 1))
+
+            plt.title(f"Граф зависимостей для '{self.config['package_name']}'\n"
+                      f"Всего узлов: {len(G.nodes)}, связей: {len(G.edges)}\n"
                       f"Фильтр: '{self.config['filter_substring']}'",
                       size=14, pad=20)
             plt.axis('off')
@@ -490,6 +529,19 @@ class DependencyVisualizer:
 
         except Exception as e:
             print(f"Ошибка при визуализации графа: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def is_edge_in_cycle(self, source: str, target: str) -> bool:
+        """Проверяет, является ли ребро частью цикла"""
+        for cycle in self.dependency_graph.cycles:
+            for i in range(len(cycle) - 1):
+                if cycle[i] == source and cycle[i + 1] == target:
+                    return True
+            # Проверяем замыкание цикла
+            if cycle[-1] == source and cycle[0] == target:
+                return True
+        return False
 
     def filter_dependencies(self, dependencies: Dict[str, str]) -> Dict[str, str]:
         if not self.config['filter_substring']:
