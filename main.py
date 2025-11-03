@@ -8,7 +8,7 @@ from collections import defaultdict
 import graphviz
 
 
-class NPMPackageParser:
+class NPMPackageParser: # формат пакетов JavaScript (npm)
     def __init__(self):
         self.npm_registry_url = "https://registry.npmjs.org"
 
@@ -54,7 +54,7 @@ class NPMPackageParser:
         return dependencies
 
 
-class URLRepositoryParser:
+class URLRepositoryParser: # информация о прямых зависимостях через URL-адрес репозитория
 
     def __init__(self):
         self.npm_parser = NPMPackageParser()
@@ -110,8 +110,7 @@ class URLRepositoryParser:
         return dependencies
 
 
-class TestRepositoryParser:
-    """Парсер для тестового репозитория с пакетами в виде больших латинских букв"""
+class TestRepositoryParser: # режим тестирования
 
     def __init__(self):
         self.test_graphs = self._create_test_graphs()
@@ -222,8 +221,8 @@ class DependencyGraph:
         if dependency and dependency not in self.graph[package]:
             self.graph[package].append(dependency)
 
-    def should_skip_package(self, package: str) -> bool:
-        """Проверяет, нужно ли пропустить пакет согласно фильтру"""
+    def should_skip_package(self, package: str) -> bool: # Не учитывает при анализе пакеты, имя которых содержит заданную пользователем подстроку
+       # фильтр
         if not self.filter_substring:
             return False
         return self.filter_substring.lower() in package.lower()
@@ -238,8 +237,7 @@ class DependencyGraph:
             filtered_graph[package] = filtered_deps
         return filtered_graph
 
-    def dfs_with_cycles_detection(self, node: str, path: List[str]):
-        """Рекурсивный DFS с обнаружением циклов"""
+    def dfs_with_cycles_detection(self, node: str, path: List[str]): # рекурсивный алгоритм DFS с рекурсией с обнаружением циклов
         if self.should_skip_package(node):
             return
 
@@ -266,7 +264,7 @@ class DependencyGraph:
         self.recursion_stack.remove(node)
         path.pop()
 
-    def find_all_cycles(self) -> List[List[str]]:
+    def find_all_cycles(self) -> List[List[str]]: # обработка случаев наличия циклических зависимостей
         """Находит все циклы в графе"""
         self.visited.clear()
         self.recursion_stack.clear()
@@ -298,7 +296,6 @@ class DependencyGraph:
         return visited
 
     def build_complete_dependency_graph(self, start_packages: List[str]) -> Dict[str, Set[str]]:
-        """Строит полный граф зависимостей для начальных пакетов"""
         result = {}
         for package in start_packages:
             if not self.should_skip_package(package):
@@ -306,7 +303,6 @@ class DependencyGraph:
         return result
 
     def print_graph(self):
-        """Выводит граф для отладки"""
         print("\nСТРУКТУРА ГРАФА (после фильтрации):")
         filtered_graph = self.get_filtered_graph()
 
@@ -321,7 +317,7 @@ class DependencyGraph:
                 print(f"  {package} -> (нет зависимостей)")
 
     def get_load_order(self, start_package: str) -> List[str]:
-        """Возвращает порядок загрузки зависимостей (топологическая сортировка)"""
+        """Возвращает порядок загрузки зависимостей"""
         if self.should_skip_package(start_package):
             return []
 
@@ -372,8 +368,7 @@ class DependencyGraph:
         dfs_detailed(start_package, level)
         return load_order
 
-    def generate_graphviz_dot(self, start_package: str) -> str:
-        """Генерирует представление графа на языке DOT"""
+    def generate_graphviz_dot(self, start_package: str) -> str: # Формирование текстового представления графа зависимостей на языке диаграмм Graphviz
         filtered_graph = self.get_filtered_graph()
 
         dot_lines = [
@@ -415,10 +410,7 @@ class PackageManagerSimulator:
 
     @staticmethod
     def simulate_npm_install_order(dependencies: Dict[str, List[str]], package: str) -> List[str]:
-        """
-        Симулирует порядок установки как npm/yarn
-        npm обычно устанавливает зависимости в алфавитном порядке на каждом уровне
-        """
+
         visited = set()
         install_order = []
 
@@ -439,10 +431,7 @@ class PackageManagerSimulator:
 
     @staticmethod
     def simulate_pip_install_order(dependencies: Dict[str, List[str]], package: str) -> List[str]:
-        """
-        Симулирует порядок установки как pip
-        pip обычно устанавливает в порядке встречи зависимостей
-        """
+
         visited = set()
         install_order = []
 
@@ -474,7 +463,7 @@ class DependencyVisualizer:
     def is_url(self, repository: str) -> bool:
         return repository.startswith(('http://', 'https://'))
 
-    def validate_parameters(self) -> bool:
+    def validate_parameters(self) -> bool: # обработка ошибок
 
         if not self.config['package_name']:
             print("Ошибка: Имя пакета не может быть пустым")
@@ -491,7 +480,7 @@ class DependencyVisualizer:
 
         return True
 
-    def display_config(self):
+    def display_config(self): # параметры, настраиваемые пользователем
         print("\n    Конфигурация приложения")
         for key, value in self.config.items():
             print(f"{key}: {value}")
@@ -553,7 +542,6 @@ class DependencyVisualizer:
         return True
 
     def build_dependency_graph(self, dependencies_data: Dict[str, Any]):
-        """Строит граф зависимостей из полученных данных"""
         if self.config['test_mode']:
             # Для тестовых данных (уже готовый граф)
             print("Построение графа из тестовых данных...")
@@ -562,13 +550,11 @@ class DependencyVisualizer:
                     if dep:  # проверяем, что зависимость не пустая
                         self.dependency_graph.add_dependency(package, dep)
         else:
-            # Для реальных npm зависимостей
             print("Построение графа из npm зависимостей...")
             for package, version in dependencies_data.items():
                 self.dependency_graph.add_dependency(self.config['package_name'], package)
 
     def analyze_dependency_graph(self):
-        """Анализирует граф зависимостей"""
         # Выводим структуру графа для отладки
         self.dependency_graph.print_graph()
 
@@ -617,7 +603,6 @@ class DependencyVisualizer:
             self.compare_with_package_managers()
 
     def compare_with_package_managers(self):
-        """Сравнивает наш порядок загрузки с симуляцией менеджеров пакетов"""
         print("СРАВНЕНИЕ С МЕНЕДЖЕРАМИ ПАКЕТОВ")
 
         # Наш порядок
@@ -652,8 +637,7 @@ class DependencyVisualizer:
         for diff in differences:
             print(f"  - {diff}")
 
-    def visualize_dependency_graph(self):
-        """Визуализирует граф зависимостей с помощью Graphviz"""
+    def visualize_dependency_graph(self): # изображение графа в файле формата SVG
         try:
             # Генерируем DOT представление
             dot_source = self.dependency_graph.generate_graphviz_dot(self.config['package_name'])
@@ -689,7 +673,7 @@ class DependencyVisualizer:
 
         return filtered
 
-    def display_direct_dependencies(self, dependencies: Dict[str, str]):
+    def display_direct_dependencies(self, dependencies: Dict[str, str]): # все прямые зависимости заданного пользователем пакета
         print(f"\n Прямые зависимости пакета '{self.config['package_name'].upper()}' ")
 
         if not dependencies:
@@ -721,7 +705,6 @@ class DependencyVisualizer:
 
 
 def create_test_files():
-    """Создает тестовые файлы для демонстрации"""
     test_files = {
         "test_linear.txt": """A: B
 B: C
@@ -773,7 +756,6 @@ O:"""
 
 
 def demonstrate_functionality():
-    """Демонстрирует функциональность на различных тестовых случаях"""
     print("ДЕМОНСТРАЦИЯ ФУНКЦИОНАЛЬНОСТИ")
 
     # Создаем тестовые файлы
@@ -824,7 +806,7 @@ def demonstrate_functionality():
         visualizer.analyze_dependencies()
 
 
-def parse_arguments():
+def parse_arguments(): #параметры командной строки
     parser = argparse.ArgumentParser(
         description='Инструмент визуализации графа зависимостей пакетов',
         formatter_class=argparse.RawDescriptionHelpFormatter)
