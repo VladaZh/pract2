@@ -948,8 +948,6 @@ if __name__ == "__main__":
     main()
 
 """
-Тесты
-
 # Демонстрация всех функций
 python main.py --demo
 
@@ -962,11 +960,9 @@ python main.py --package A --repo test_cyclic.json --test-mode --output cyclic.s
 python main.py --package express --repo https://github.com/expressjs/express --output express_deps.svg
 эта же команда с фильтром
 python main.py --package express --repo https://github.com/expressjs/express --output express_deps.svg --filter "accepts"
+                     
 тестирование npm registry
-python main.py --package react --repo https://registry.npmjs.org --load-order --output react_npm.svg
-
-# Пакет с mixed зависимостями (Vue.js)
-python main.py --package vue --repo https://github.com/vuejs/vue --output vue_mixed.svg
+python main.py --package chalk --repo https://registry.npmjs.org --output chalk_npm.svg
 
 Пакет с минимальными зависимостями
 python main.py --package chalk --repo https://registry.npmjs.org --output chalk_deps.svg
