@@ -968,6 +968,9 @@ python main.py --package react --repo https://registry.npmjs.org --load-order --
 # Пакет с mixed зависимостями (Vue.js)
 python main.py --package vue --repo https://github.com/vuejs/vue --output vue_mixed.svg
 
+Пакет с минимальными зависимостями
+python main.py --package chalk --repo https://registry.npmjs.org --output chalk_deps.svg
+
 # Пакет с TypeScript (много dev зависимостей)
 python main.py --package typescript --repo https://github.com/microsoft/TypeScript --output typescript_deps.svg
 """
