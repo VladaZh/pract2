@@ -758,7 +758,7 @@ O:"""
 def demonstrate_functionality():
     print("ДЕМОНСТРАЦИЯ ФУНКЦИОНАЛЬНОСТИ")
 
-    test_cases = [
+    test_cases = [ # JSON структура из npm registry
         {
             "name": "Express.js",
             "package": "express",
