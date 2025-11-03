@@ -586,7 +586,7 @@ class DependencyVisualizer:
         """Анализирует и сравнивает порядок загрузки зависимостей"""
         print("АНАЛИЗ ПОРЯДКА ЗАГРУЗКИ ЗАВИСИМОСТЕЙ")
 
-        # Порядок загрузки нашим алгоритмом
+        # Порядок загрузки этим алгоритмом
         load_order = self.dependency_graph.get_load_order(self.config['package_name'])
         detailed_order = self.dependency_graph.get_detailed_load_order(self.config['package_name'])
 
@@ -605,7 +605,7 @@ class DependencyVisualizer:
     def compare_with_package_managers(self):
         print("СРАВНЕНИЕ С МЕНЕДЖЕРАМИ ПАКЕТОВ")
 
-        # Наш порядок
+        # порядок
         our_order = self.dependency_graph.get_load_order(self.config['package_name'])
 
         # Симуляция npm
@@ -620,7 +620,7 @@ class DependencyVisualizer:
             self.config['package_name']
         )
 
-        print(f"\nНаш алгоритм:    {' -> '.join(our_order)}")
+        print(f"\nАлгоритм:    {' -> '.join(our_order)}")
         print(f"NPM-подобный:    {' -> '.join(npm_order)}")
         print(f"PIP-подобный:    {' -> '.join(pip_order)}")
 
@@ -935,6 +935,8 @@ python main.py --package A --repo test_cyclic.json --test-mode --output cyclic.s
 
 # Пакет с production зависимостями (Express.js)
 python main.py --package express --repo https://github.com/expressjs/express --output express_deps.svg
+эта же команда с фильтром
+python main.py --package express --repo https://github.com/expressjs/express --output express_deps.svg --filter "accepts"
 
 # Пакет с mixed зависимостями (Vue.js)
 python main.py --package vue --repo https://github.com/vuejs/vue --output vue_mixed.svg
