@@ -758,32 +758,53 @@ O:"""
 def demonstrate_functionality():
     print("ДЕМОНСТРАЦИЯ ФУНКЦИОНАЛЬНОСТИ")
 
-    # Создаем тестовые файлы
-    create_test_files()
-
     test_cases = [
         {
-            "name": "Линейный граф",
-            "package": "A",
-            "repo": "test_linear.txt",
+            "name": "Express.js",
+            "package": "express",
+            "repo": "https://registry.npmjs.org",
             "filter": "",
-            "test_mode": True,
+            "test_mode": False,
             "show_load_order": True
         },
         {
-            "name": "Ветвящийся граф с фильтром 'D'",
-            "package": "A",
-            "repo": "test_branching.txt",
-            "filter": "D",
-            "test_mode": True,
+            "name": "React",
+            "package": "react",
+            "repo": "https://registry.npmjs.org",
+            "filter": "",
+            "test_mode": False,
             "show_load_order": True
         },
         {
-            "name": "Циклический граф",
-            "package": "A",
-            "repo": "test_cyclic.json",
+            "name": "Lodash",
+            "package": "lodash",
+            "repo": "https://registry.npmjs.org",
             "filter": "",
-            "test_mode": True,
+            "test_mode": False,
+            "show_load_order": False
+        },
+        {
+            "name": "Axios",
+            "package": "axios",
+            "repo": "https://registry.npmjs.org",
+            "filter": "",
+            "test_mode": False,
+            "show_load_order": True
+        },
+        {
+            "name": "TypeScript с фильтром dev-зависимостей",
+            "package": "typescript",
+            "repo": "https://registry.npmjs.org",
+            "filter": "dev",
+            "test_mode": False,
+            "show_load_order": False
+        },
+        {
+            "name": "Vue.js",
+            "package": "vue",
+            "repo": "https://registry.npmjs.org",
+            "filter": "",
+            "test_mode": False,
             "show_load_order": True
         }
     ]
@@ -796,15 +817,19 @@ def demonstrate_functionality():
         config = {
             'package_name': test_case['package'],
             'repository': test_case['repo'],
-            'output_file': f'test_output_{i}.svg',
+            'output_file': f'demo_output_{test_case["package"]}.svg',
             'test_mode': test_case['test_mode'],
             'filter_substring': test_case['filter'],
-            'show_load_order': test_case['show_load_order']
+            'show_load_order': test_case['show_load_order'],
+            'no_visualization': False
         }
 
         visualizer = DependencyVisualizer(config)
-        visualizer.analyze_dependencies()
 
+        # Запускаем полный анализ
+        success = visualizer.analyze_dependencies()
+        if not success:
+            print(f"Пропускаем дальнейший анализ для {test_case['package']} из-за ошибок")
 
 def parse_arguments(): #параметры командной строки
     parser = argparse.ArgumentParser(
